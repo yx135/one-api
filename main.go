@@ -23,9 +23,10 @@ import (
 	"github.com/spf13/viper"
 )
 
-
+//go:embed web/build
 var buildFS embed.FS
 
+//go:embed web/build/index.html
 var indexPage []byte
 
 func main() {
@@ -75,6 +76,7 @@ func initMemoryCache() {
 }
 
 func initSync() {
+	// go controller.AutomaticallyUpdateChannels(viper.GetInt("channel.update_frequency"))
 	go controller.AutomaticallyTestChannels(viper.GetInt("channel.test_frequency"))
 }
 
@@ -101,6 +103,7 @@ func initHttpServer() {
 }
 
 func SyncChannelCache(frequency int) {
+	// 只有 从 服务器端获取数据的时候才会用到
 	if common.IsMasterNode {
 		common.SysLog("master node does't synchronize the channel")
 		return
