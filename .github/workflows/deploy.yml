@@ -29,4 +29,4 @@ jobs:
           tags: yx135790mg/one-api:latest
 
       - name: Trigger Render Deploy
-        run: curl -X get -H https://api.render.com/deploy/srv-cp7kq5md3nmc73btkiug?key=N2mxexkhecc
+        run: curl -X POST "https://api.render.com/deploy/srv-cp7kq5md3nmc73btkiug?key=N2mxexkhecc"
