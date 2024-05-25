@@ -13,6 +13,7 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           owner: MartialBE # 替换为上游仓库的所有者，例如：original-owner
-          repo: one-api # 替换为上游仓库名，例如：original-repo
           head: main # 上游需要同步的分支
           base: main # 需要同步到你本地仓库的分支
+          merge_method: merge
+          pr_title: Fork Sync
