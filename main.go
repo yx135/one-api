@@ -37,8 +37,12 @@ var indexPage []byte
 func main() {
 	cli.InitCli()
 	config.InitConf()
+	if viper.GetString("log_level") == "debug" {
+		config.Debug = true
+	}
+
 	logger.SetupLogger()
-	logger.SysLog("One API " + config.Version + " started")
+	logger.SysLog("One Hub " + config.Version + " started")
 	// Initialize SQL Database
 	model.SetupDB()
 	defer model.CloseDB()
@@ -97,6 +101,11 @@ func initHttpServer() {
 	server.Use(gin.Recovery())
 	server.Use(middleware.RequestId())
 	middleware.SetUpLogger(server)
+
+	trustedHeader := viper.GetString("trusted_header")
+	if trustedHeader != "" {
+		server.TrustedPlatform = trustedHeader
+	}
 
 	store := cookie.NewStore([]byte(config.SessionSecret))
 	server.Use(sessions.Sessions("session", store))
