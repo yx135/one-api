@@ -25,22 +25,35 @@ jobs:
           merge_method: merge
           pr_title: Fork Sync
 
-      - name: Fetch and merge changes
+      - name: Fetch and check for changes
+        id: check_changes
+        run: |
+          git fetch origin main
+          UPSTREAM=${1:-'@{u}'}
+          LOCAL=$(git rev-parse @)
+          REMOTE=$(git rev-parse "$UPSTREAM")
+          BASE=$(git merge-base @ "$UPSTREAM")
+          
+          if [ $LOCAL = $REMOTE ]; then
+            echo "Up-to-date"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          elif [ $LOCAL = $BASE ]; then
+            echo "Need to pull"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          elif [ $REMOTE = $BASE ]; then
+            echo "Need to push"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "Diverged"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Merge changes if any
+        if: steps.check_changes.outputs.has_changes == 'true'
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
-          git fetch origin main
           git merge origin/main --allow-unrelated-histories
-
-      - name: Check for changes
-        id: check_changes
-        run: |
-          CHANGES=$(git diff HEAD@{1} HEAD --name-only)
-          if [ -n "$CHANGES" ]; then
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-          fi
 
       - name: Set up Docker Buildx
         if: steps.check_changes.outputs.has_changes == 'true'
