@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"one-api/common"
 	"one-api/common/config"
 	"one-api/common/logger"
 	"one-api/common/redis"
@@ -12,19 +13,30 @@ import (
 	"gorm.io/gorm"
 )
 
+var (
+	ErrTokenNotFound          = errors.New("令牌不存在")
+	ErrTokenExpired           = errors.New("令牌已过期")
+	ErrTokenQuotaExhausted    = errors.New("令牌额度已用尽")
+	ErrTokenStatusUnavailable = errors.New("令牌状态不可用")
+	ErrTokenInvalid           = errors.New("无效的令牌")
+	ErrTokenQuotaGet          = errors.New("获取令牌额度失败")
+)
+
 type Token struct {
-	Id             int    `json:"id"`
-	UserId         int    `json:"user_id"`
-	Key            string `json:"key" gorm:"type:char(48);uniqueIndex"`
-	Status         int    `json:"status" gorm:"default:1"`
-	Name           string `json:"name" gorm:"index" `
-	CreatedTime    int64  `json:"created_time" gorm:"bigint"`
-	AccessedTime   int64  `json:"accessed_time" gorm:"bigint"`
-	ExpiredTime    int64  `json:"expired_time" gorm:"bigint;default:-1"` // -1 means never expired
-	RemainQuota    int    `json:"remain_quota" gorm:"default:0"`
-	UnlimitedQuota bool   `json:"unlimited_quota" gorm:"default:false"`
-	UsedQuota      int    `json:"used_quota" gorm:"default:0"` // used quota
-	ChatCache      bool   `json:"chat_cache" gorm:"default:false"`
+	Id             int            `json:"id"`
+	UserId         int            `json:"user_id"`
+	Key            string         `json:"key" gorm:"type:varchar(59);uniqueIndex"`
+	Status         int            `json:"status" gorm:"default:1"`
+	Name           string         `json:"name" gorm:"index" `
+	CreatedTime    int64          `json:"created_time" gorm:"bigint"`
+	AccessedTime   int64          `json:"accessed_time" gorm:"bigint"`
+	ExpiredTime    int64          `json:"expired_time" gorm:"bigint;default:-1"` // -1 means never expired
+	RemainQuota    int            `json:"remain_quota" gorm:"default:0"`
+	UnlimitedQuota bool           `json:"unlimited_quota" gorm:"default:false"`
+	UsedQuota      int            `json:"used_quota" gorm:"default:0"` // used quota
+	ChatCache      bool           `json:"chat_cache" gorm:"default:false"`
+	Group          string         `json:"group" gorm:"default:''"`
+	DeletedAt      gorm.DeletedAt `json:"-" gorm:"index"`
 }
 
 var allowedTokenOrderFields = map[string]bool{
@@ -35,6 +47,17 @@ var allowedTokenOrderFields = map[string]bool{
 	"created_time": true,
 	"remain_quota": true,
 	"used_quota":   true,
+}
+
+// 添加 AfterCreate 钩子方法
+func (token *Token) AfterCreate(tx *gorm.DB) (err error) {
+	tokenKey, err := common.GenerateToken(token.Id, token.UserId)
+	if err != nil {
+		return err
+	}
+
+	// 更新 key 字段
+	return tx.Model(token).Update("key", tokenKey).Error
 }
 
 func GetUserTokensList(userId int, params *GenericParams) (*DataResult[Token], error) {
@@ -48,47 +71,86 @@ func GetUserTokensList(userId int, params *GenericParams) (*DataResult[Token], e
 	return PaginateAndOrder(db, &params.PaginationParams, &tokens, allowedTokenOrderFields)
 }
 
-func ValidateUserToken(key string) (token *Token, err error) {
+func GetTokenModel(key string) (token *Token, err error) {
 	if key == "" {
-		return nil, errors.New("未提供令牌")
+		return nil, ErrTokenInvalid
 	}
+
+	var userId int
+	var tokenId int
+	validUser := false
+
+	switch len(key) {
+	case 48:
+		validUser = true
+		if config.RedisEnabled {
+			exists, _ := redis.RedisSIsMember(OldUserTokensCacheKey, key)
+			if !exists {
+				return nil, ErrTokenInvalid
+			}
+		}
+	case 59:
+		tokenId, userId, err = common.ValidateToken(key)
+		if err != nil || userId == 0 || tokenId == 0 {
+			return nil, ErrTokenInvalid
+		}
+		if userEnabled, err := CacheIsUserEnabled(userId); err != nil || !userEnabled {
+			return nil, ErrTokenInvalid
+		}
+	default:
+		return nil, ErrTokenInvalid
+	}
+
 	token, err = CacheGetTokenByKey(key)
 	if err != nil {
-		logger.SysError("CacheGetTokenByKey failed: " + err.Error())
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("无效的令牌")
+		logger.SysError(fmt.Sprintf("DB Not Found: userId=%d, tokenId=%d, key=%s, err=%s", userId, tokenId, key, err.Error()))
+		return nil, ErrTokenInvalid
+	}
+
+	if validUser {
+		if userEnabled, err := CacheIsUserEnabled(token.UserId); err != nil || !userEnabled {
+			return nil, ErrTokenInvalid
 		}
-		return nil, errors.New("令牌验证失败")
 	}
-	if token.Status == config.TokenStatusExhausted {
-		return nil, errors.New("该令牌额度已用尽")
-	} else if token.Status == config.TokenStatusExpired {
-		return nil, errors.New("该令牌已过期")
+
+	return token, nil
+}
+
+func ValidateUserToken(key string) (token *Token, err error) {
+	token, err = GetTokenModel(key)
+	if err != nil {
+		return nil, err
 	}
+
 	if token.Status != config.TokenStatusEnabled {
-		return nil, errors.New("该令牌状态不可用")
+		switch token.Status {
+		case config.TokenStatusExhausted:
+			return nil, ErrTokenQuotaExhausted
+		case config.TokenStatusExpired:
+			return nil, ErrTokenExpired
+		default:
+			return nil, ErrTokenStatusUnavailable
+		}
 	}
+
 	if token.ExpiredTime != -1 && token.ExpiredTime < utils.GetTimestamp() {
-		if !config.RedisEnabled {
-			token.Status = config.TokenStatusExpired
-			err := token.SelectUpdate()
-			if err != nil {
-				logger.SysError("failed to update token status" + err.Error())
-			}
-		}
-		return nil, errors.New("该令牌已过期")
+		return nil, ErrTokenExpired
 	}
-	if !token.UnlimitedQuota && token.RemainQuota <= 0 {
-		if !config.RedisEnabled {
-			// in this case, we can make sure the token is exhausted
-			token.Status = config.TokenStatusExhausted
-			err := token.SelectUpdate()
-			if err != nil {
-				logger.SysError("failed to update token status" + err.Error())
+
+	if !token.UnlimitedQuota {
+		if !token.UnlimitedQuota && token.RemainQuota <= 0 {
+			if !config.RedisEnabled {
+				// in this case, we can make sure the token is exhausted
+				token.Status = config.TokenStatusExhausted
+				err := token.SelectUpdate()
+				if err != nil {
+					logger.SysError("failed to update token status" + err.Error())
+				}
 			}
+			return nil, ErrTokenQuotaExhausted
 		}
-		return nil, errors.New("该令牌额度已用尽")
 	}
+
 	return token, nil
 }
 
@@ -122,6 +184,18 @@ func GetTokenByName(name string, userId int) (*Token, error) {
 	return &token, err
 }
 
+func GetTokenByKey(key string) (*Token, error) {
+	keyCol := "`key`"
+	if common.UsingPostgreSQL {
+		keyCol = `"key"`
+	}
+
+	var token Token
+
+	err := DB.Where(keyCol+" = ?", key).First(&token).Error
+	return &token, err
+}
+
 func (token *Token) Insert() error {
 	if token.ChatCache && !config.ChatCacheEnabled {
 		token.ChatCache = false
@@ -137,10 +211,10 @@ func (token *Token) Update() error {
 		token.ChatCache = false
 	}
 
-	err := DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota", "chat_cache").Updates(token).Error
+	err := DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota", "chat_cache", "group").Updates(token).Error
 	// 防止Redis缓存不生效，直接删除
 	if err == nil && config.RedisEnabled {
-		redis.RedisDel(fmt.Sprintf("token:%s", token.Key))
+		redis.RedisDel(fmt.Sprintf(UserTokensKey, token.Key))
 	}
 
 	return err
@@ -166,7 +240,14 @@ func DeleteTokenById(id int, userId int) (err error) {
 	if err != nil {
 		return err
 	}
-	return token.Delete()
+	err = token.Delete()
+
+	if err == nil && config.RedisEnabled {
+		redis.RedisDel(fmt.Sprintf(UserTokensKey, token.Key))
+	}
+
+	return err
+
 }
 
 func IncreaseTokenQuota(id int, quota int) (err error) {
@@ -272,6 +353,9 @@ func sendQuotaWarningEmail(userId int, userQuota int, noMoreQuota bool) {
 }
 
 func PostConsumeTokenQuota(tokenId int, quota int) (err error) {
+	if quota == 0 {
+		return nil
+	}
 	token, err := GetTokenById(tokenId)
 	if err != nil {
 		return err

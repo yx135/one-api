@@ -10,7 +10,7 @@ import (
 	"one-api/common/image"
 	"one-api/common/logger"
 	"one-api/common/requester"
-	"one-api/model"
+	"one-api/metrics"
 	"one-api/providers/gemini"
 	"one-api/relay/relay_util"
 	"one-api/types"
@@ -83,6 +83,7 @@ func RelaycGeminiOnly(c *gin.Context) {
 	errWithCode, done := RelayGeminiHandler(c, promptTokens, chatProvider, cacheProps, request, originalModel)
 
 	if errWithCode == nil {
+		metrics.RecordProvider(c, 200)
 		return
 	}
 
@@ -98,7 +99,7 @@ func RelaycGeminiOnly(c *gin.Context) {
 
 	for i := retryTimes; i > 0; i-- {
 		// 冻结通道
-		model.ChannelGroup.Cooldowns(channel.Id)
+		shouldCooldowns(c, channel, apiErr)
 		chatProvider, modelName, fail := GetGeminiChatInterface(c, originalModel)
 		if fail != nil {
 			continue
@@ -118,6 +119,7 @@ func RelaycGeminiOnly(c *gin.Context) {
 
 		errWithCode, done = RelayGeminiHandler(c, promptTokens, chatProvider, cacheProps, request, originalModel)
 		if errWithCode == nil {
+			metrics.RecordProvider(c, 200)
 			return
 		}
 
@@ -143,9 +145,8 @@ func RelayGeminiHandler(c *gin.Context, promptTokens int, chatProvider gemini.Ge
 	}
 	chatProvider.SetUsage(usage)
 
-	var quota *relay_util.Quota
-	quota, err := relay_util.NewQuota(c, request.Model, promptTokens)
-	if err != nil {
+	quota := relay_util.NewQuota(c, request.Model, promptTokens)
+	if err := quota.PreQuotaConsumption(); err != nil {
 		return gemini.OpenaiErrToGeminiErr(err), true
 	}
 
@@ -156,7 +157,7 @@ func RelayGeminiHandler(c *gin.Context, promptTokens int, chatProvider gemini.Ge
 		return
 	}
 
-	quota.Consume(c, usage)
+	quota.Consume(c, usage, request.Stream)
 	if usage.CompletionTokens > 0 {
 		go cache.StoreCache(c.GetInt("channel_id"), usage.PromptTokens, usage.CompletionTokens, originalModel)
 	}

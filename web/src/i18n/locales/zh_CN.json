@@ -1,18 +1,22 @@
 {
   "dashboard": "仪表盘",
   "analytics": "分析",
+  "playground": "聊天",
   "channel": "渠道",
   "token": "令牌",
   "log": "日志",
   "redemption": "兑换",
   "topup": "充值",
   "user": "用户",
+  "user_group": "用户分组",
   "profile": "个人设置",
   "pricing": "模型价格",
   "model_price": "可用模型",
   "payment": "支付",
   "setting": "设置",
   "task": "异步任务",
+  "operation": "运营",
+  "paySetting": "支付设置",
   "menu": {
     "home": "首页",
     "about": "关于",
@@ -146,7 +150,16 @@
     "requiredModels": "模型 不能为空",
     "requiredGroup": "用户组 不能为空",
     "requiredBaseUrl": "渠道API地址 不能为空",
-    "validJson": "必须是有效的JSON字符串"
+    "validJson": "必须是有效的JSON字符串",
+    "modelMappingKey": "用户请求模型",
+    "modelMappingValue": "实际转发模型",
+    "addModelMapping": "添加模型映射",
+    "addModelMappingByJson": "添加模型映射(JSON)",
+    "jsonInputLabel": "JSON对象，key为请求模型，value为实际转发模型",
+    "invalidJson": "无效的JSON",
+    "modelHeaderKey": "自定义Header Key",
+    "modelHeaderValue": "自定义Header Value",
+    "addModelHeader": "添加自定义Header"
   },
   "token_index": {
     "token": "令牌",
@@ -176,6 +189,7 @@
     "quota": "额度",
     "unlimitedQuota": "无限额度",
     "enableCache": "是否开启缓存(开启后，将会缓存聊天记录，以减少消费)",
+    "userGroup": "分组",
     "cancel": "取消",
     "submit": "提交"
   },
@@ -185,6 +199,7 @@
     "searchButton": "搜索",
     "timeLabel": "时间",
     "channelLabel": "渠道",
+    "groupLabel": "分组",
     "userLabel": "用户",
     "tokenLabel": "令牌",
     "typeLabel": "类型",
@@ -195,7 +210,14 @@
     "outputLabel": "输出",
     "quotaLabel": "额度",
     "detailLabel": "详情",
-    "searchLogsInfo": "充值记录以及邀请记录请在日志中查询。充值记录请在日志中选择类型【充值】查询；邀请记录请在日志中选择【系统】查询"
+    "searchLogsInfo": "充值记录以及邀请记录请在日志中查询。充值记录请在日志中选择类型【充值】查询；邀请记录请在日志中选择【系统】查询",
+    "inputTextTokens": "输入文本Tokens",
+    "outputTextTokens": "输出文本Tokens",
+    "inputAudioTokens": "输入音频Tokens",
+    "outputAudioTokens": "输出音频Tokens",
+    "cachedTokens": "缓存Tokens",
+    "totalInputTokens": "计算输入Tokens",
+    "totalOutputTokens": "计算输出Tokens"
   },
   "redemptionPage": {
     "pageTitle": "兑换",
@@ -821,7 +843,10 @@
     "enable": "已启用",
     "disable": "已禁用",
     "expired": "已过期",
-    "exhaust": "已耗尽"
+    "exhaust": "已耗尽",
+    "execute": "是否执行 {{title}}?",
+    "executeConfirm": "执行",
+    "deleteConfirm": "是否删除 {{title}}?"
   },
   "channel_row": {
     "priorityTip": "优先级不能小于 0",
@@ -955,11 +980,11 @@
   "单独设置代理地址，支持http和socks5，例如：http://127.0.0.1:1080": "单独设置代理地址，支持http和socks5，例如：http://127.0.0.1:1080",
   "用于测试使用的模型，为空时无法测速,如：gpt-3.5-turbo，仅支持chat模型": "用于测试使用的模型，为空时无法测速,如：gpt-3.5-turbo，仅支持chat模型",
   "请选择该渠道所支持的模型,你也可以输入通配符*来匹配模型，例如：gpt-3.5*，表示支持所有gpt-3.5开头的模型，*号只能在最后一位使用，前面必须有字符，例如：gpt-3.5*是正确的，*gpt-3.5是错误的": "请选择该渠道所支持的模型,你也可以输入通配符*来匹配模型，例如：gpt-3.5*，表示支持所有gpt-3.5开头的模型，*号只能在最后一位使用，前面必须有字符，例如：gpt-3.5*是正确的，*gpt-3.5是错误的",
-  "请输入要修改的模型映射关系，格式为：api请求模型ID:实际转发给渠道的模型ID，使用JSON数组表示，例如：{\"gpt-3.5-turbo-16k\": \"gpt-3.5-turbo-16k-0613\"}": "请输入要修改的模型映射关系，格式为：api请求模型ID:实际转发给渠道的模型ID，使用JSON数组表示，例如：{\"gpt-3.5-turbo-16k\": \"gpt-3.5-turbo-16k-0613\"}",
+  "模型映射关系：例如用户请求A模型，实际转发给渠道的模型为B。": "模型映射关系：例如用户请求A模型，实际转发给渠道的模型为B。",
   "请选择该渠道所支持的用户组": "请选择该渠道所支持的用户组",
   "如果选择了仅支持聊天，那么遇到有函数调用的请求会跳过该渠道": "如果选择了仅支持聊天，那么遇到有函数调用的请求会跳过该渠道",
   "必须填写所有数据后才能获取模型列表": "必须填写所有数据后才能获取模型列表",
-  "你可以为你的渠道打一个标签，打完标签后，可以通过标签进行批量管理渠道": "你可以为你的渠道打一个标签，打完标签后，可以通过标签进行批量管理渠道",
+  "你可以为你的渠道打一个标签，打完标签后，可以通过标签进行批量管理渠道，注意：设置标签后某些设置只能通过渠道标签修改，无法在渠道列表中修改。": "你可以为你的渠道打一个标签，打完标签后，可以通过标签进行批量管理渠道，注意：设置标签后某些设置只能通过渠道标签修改，无法在渠道列表中修改。",
   "从OpenAI获取模型列表": "从OpenAI获取模型列表",
   "从渠道获取模型列表": "从渠道获取模型列表",
   "替换 API 版本": "替换 API 版本",
@@ -1045,5 +1070,21 @@
     "video": "视频",
     "lyrics": "歌词",
     "response": "响应体"
+  },
+  "预计费选项": "预计费选项",
+  "这里选择预计费选项，用于预估费用，如果你觉得计算图片占用太多资源，可以选择关闭图片计费。但是请注意：有些渠道在stream下是不会返回tokens的，这会导致输入tokens计算错误。": "这里选择预计费选项，用于预估费用，如果你觉得计算图片占用太多资源，可以选择关闭图片计费。但是请注意：有些渠道在stream下是不会返回tokens的，这会导致输入tokens计算错误。",
+  "userGroup": {
+    "title": "用户分组",
+    "create": "新建分组",
+    "id": "ID",
+    "symbol": "标识",
+    "name": "名称",
+    "ratio": "倍率",
+    "public": "是否公开",
+    "enable": "是否启用",
+    "symbolTip": "标识用于区分用户组,请使用英文，不可重复",
+    "nameTip": "给用户看的名称",
+    "apiRate": "API速率",
+    "apiRateTip": "每分钟允许的请求数,当速率小于60时，使用计数器限制器，当速率大于等于60时，使用令牌桶限制器，仅在启用Redis时有效"
   }
 }

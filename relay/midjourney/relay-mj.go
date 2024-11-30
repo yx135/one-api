@@ -174,7 +174,7 @@ func RelaySwapFace(c *gin.Context) *provider.MidjourneyResponse {
 
 	defer func(ctx context.Context) {
 		if mjResp.StatusCode == 200 && mjResp.Response.Code == 1 {
-			quotaInstance.Consume(c, &types.Usage{CompletionTokens: 0, PromptTokens: 1, TotalTokens: 1})
+			quotaInstance.Consume(c, &types.Usage{CompletionTokens: 0, PromptTokens: 1, TotalTokens: 1}, false)
 		} else {
 			quotaInstance.Undo(c)
 		}
@@ -429,7 +429,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayMode int) *provider.MidjourneyRe
 
 	defer func(ctx context.Context) {
 		if consumeQuota && midjResponseWithStatus.StatusCode == 200 {
-			quotaInstance.Consume(c, &types.Usage{CompletionTokens: 0, PromptTokens: 1, TotalTokens: 1})
+			quotaInstance.Consume(c, &types.Usage{CompletionTokens: 0, PromptTokens: 1, TotalTokens: 1}, false)
 		} else {
 			quotaInstance.Undo(c)
 		}
@@ -556,8 +556,12 @@ func getMjRequestPath(path string) string {
 
 func getQuota(c *gin.Context, action string) (*relay_util.Quota, *types.OpenAIErrorWithStatusCode) {
 	modelName := CoverActionToModelName(action)
+	quota := relay_util.NewQuota(c, modelName, 1000)
+	if err := quota.PreQuotaConsumption(); err != nil {
+		return nil, err
+	}
 
-	return relay_util.NewQuota(c, modelName, 1000)
+	return quota, nil
 }
 
 func getMJProviderWithRequest(c *gin.Context, relayMode int, request *provider.MidjourneyRequest) (*provider.MidjourneyProvider, *provider.MidjourneyResponse) {

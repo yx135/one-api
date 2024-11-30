@@ -35,9 +35,8 @@ func RelayTaskSubmit(c *gin.Context) {
 		return
 	}
 
-	quotaInstance, errWithOA := relay_util.NewQuota(c, taskAdaptor.GetModelName(), 1000)
-
-	if errWithOA != nil {
+	quotaInstance := relay_util.NewQuota(c, taskAdaptor.GetModelName(), 1000)
+	if errWithOA := quotaInstance.PreQuotaConsumption(); errWithOA != nil {
 		taskAdaptor.HandleError(base.OpenAIErrToTaskErr(errWithOA))
 		return
 	}
@@ -59,7 +58,7 @@ func RelayTaskSubmit(c *gin.Context) {
 
 	channel := taskAdaptor.GetProvider().GetChannel()
 	for i := retryTimes; i > 0; i-- {
-		model.ChannelGroup.Cooldowns(channel.Id)
+		model.ChannelGroup.SetCooldowns(channel.Id, taskAdaptor.GetModelName())
 		taskErr = taskAdaptor.SetProvider()
 		if taskErr != nil {
 			continue
@@ -88,7 +87,7 @@ func RelayTaskSubmit(c *gin.Context) {
 }
 
 func CompletedTask(quotaInstance *relay_util.Quota, taskAdaptor base.TaskInterface, c *gin.Context) {
-	quotaInstance.Consume(c, &types.Usage{CompletionTokens: 0, PromptTokens: 1, TotalTokens: 1})
+	quotaInstance.Consume(c, &types.Usage{CompletionTokens: 0, PromptTokens: 1, TotalTokens: 1}, false)
 
 	task := taskAdaptor.GetTask()
 	task.Quota = int(quotaInstance.GetInputRatio() * 1000)

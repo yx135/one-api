@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/bwmarrin/snowflake"
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
 )
@@ -176,6 +177,10 @@ func GetRandomString(length int) string {
 	return string(key)
 }
 
+func GetRandomInt(length int) int {
+	return rand.Intn(int(math.Pow10(length)))
+}
+
 func GetTimestamp() int64 {
 	return time.Now().Unix()
 }
@@ -231,6 +236,15 @@ func IsFileExist(path string) bool {
 func Contains[T comparable](value T, slice []T) bool {
 	for _, item := range slice {
 		if item == value {
+			return true
+		}
+	}
+	return false
+}
+
+func ContainsString(s string, keywords []string) bool {
+	for _, keyword := range keywords {
+		if strings.Contains(s, keyword) {
 			return true
 		}
 	}
@@ -322,4 +336,22 @@ func GetUnixTime() int64 {
 
 func NumClamp(value, minVal, maxVal float64) float64 {
 	return math.Max(minVal, math.Min(maxVal, value))
+}
+
+func GetGinValue[T any](c *gin.Context, key string) (T, bool) {
+	value, exists := c.Get(key)
+	if !exists {
+		var zeroValue T
+		return zeroValue, false
+	}
+	if v, ok := value.(T); ok {
+		return v, true
+	}
+
+	var zeroValue T
+	return zeroValue, false
+}
+
+func GetPointer[T any](val T) *T {
+	return &val
 }

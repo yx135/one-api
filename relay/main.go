@@ -6,6 +6,8 @@ import (
 	"one-api/common"
 	"one-api/common/config"
 	"one-api/common/logger"
+	"one-api/common/utils"
+	"one-api/metrics"
 	"one-api/model"
 	"one-api/relay/relay_util"
 	"one-api/types"
@@ -45,6 +47,7 @@ func Relay(c *gin.Context) {
 
 	apiErr, done := RelayHandler(relay)
 	if apiErr == nil {
+		metrics.RecordProvider(c, 200)
 		return
 	}
 
@@ -59,7 +62,7 @@ func Relay(c *gin.Context) {
 
 	for i := retryTimes; i > 0; i-- {
 		// 冻结通道
-		model.ChannelGroup.Cooldowns(channel.Id)
+		shouldCooldowns(c, channel, apiErr)
 		if err := relay.setProvider(relay.getOriginalModel()); err != nil {
 			continue
 		}
@@ -68,6 +71,7 @@ func Relay(c *gin.Context) {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("using channel #%d(%s) to retry (remain times %d)", channel.Id, channel.Name, i))
 		apiErr, done = RelayHandler(relay)
 		if apiErr == nil {
+			metrics.RecordProvider(c, 200)
 			return
 		}
 		go processChannelRelayError(c.Request.Context(), channel.Id, channel.Name, apiErr, channel.Type)
@@ -98,9 +102,8 @@ func RelayHandler(relay RelayBaseInterface) (err *types.OpenAIErrorWithStatusCod
 
 	relay.getProvider().SetUsage(usage)
 
-	var quota *relay_util.Quota
-	quota, err = relay_util.NewQuota(relay.getContext(), relay.getModelName(), promptTokens)
-	if err != nil {
+	quota := relay_util.NewQuota(relay.getContext(), relay.getModelName(), promptTokens)
+	if err = quota.PreQuotaConsumption(); err != nil {
 		done = true
 		return
 	}
@@ -112,7 +115,7 @@ func RelayHandler(relay RelayBaseInterface) (err *types.OpenAIErrorWithStatusCod
 		return
 	}
 
-	quota.Consume(relay.getContext(), usage)
+	quota.Consume(relay.getContext(), usage, relay.IsStream())
 	if usage.CompletionTokens > 0 {
 		cacheProps := relay.GetChatCache()
 		go cacheProps.StoreCache(relay.getContext().GetInt("channel_id"), usage.PromptTokens, usage.CompletionTokens, relay.getModelName())
@@ -136,5 +139,24 @@ func cacheProcessing(c *gin.Context, cacheProps *relay_util.ChatCacheProps, isSt
 		}
 	}
 
-	model.RecordConsumeLog(c.Request.Context(), cacheProps.UserId, cacheProps.ChannelID, cacheProps.PromptTokens, cacheProps.CompletionTokens, cacheProps.ModelName, tokenName, 0, "缓存", requestTime)
+	model.RecordConsumeLog(c.Request.Context(), cacheProps.UserId, cacheProps.ChannelID, cacheProps.PromptTokens, cacheProps.CompletionTokens, cacheProps.ModelName, tokenName, 0, "缓存", requestTime, isStream, nil)
+}
+
+func shouldCooldowns(c *gin.Context, channel *model.Channel, apiErr *types.OpenAIErrorWithStatusCode) {
+	modelName := c.GetString("new_model")
+	channelId := channel.Id
+
+	// 如果是频率限制，冻结通道
+	if apiErr.StatusCode == http.StatusTooManyRequests {
+		model.ChannelGroup.SetCooldowns(channelId, modelName)
+	}
+
+	skipChannelIds, ok := utils.GetGinValue[[]int](c, "skip_channel_ids")
+	if !ok {
+		skipChannelIds = make([]int, 0)
+	}
+
+	skipChannelIds = append(skipChannelIds, channelId)
+
+	c.Set("skip_channel_ids", skipChannelIds)
 }
