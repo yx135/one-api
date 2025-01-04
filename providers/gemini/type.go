@@ -7,6 +7,7 @@ import (
 	"one-api/common/image"
 	"one-api/common/utils"
 	"one-api/types"
+	"strings"
 )
 
 type GeminiChatRequest struct {
@@ -75,7 +76,7 @@ func (candidate *GeminiChatCandidate) ToOpenAIStreamChoice(request *types.ChatCo
 		choice.FinishReason = ConvertFinishReason(*candidate.FinishReason)
 	}
 
-	content := ""
+	var content []string
 	isTools := false
 
 	for _, part := range candidate.Content.Parts {
@@ -87,16 +88,16 @@ func (candidate *GeminiChatCandidate) ToOpenAIStreamChoice(request *types.ChatCo
 			choice.Delta.ToolCalls = append(choice.Delta.ToolCalls, part.FunctionCall.ToOpenAITool())
 		} else {
 			if part.ExecutableCode != nil {
-				content += "```" + part.ExecutableCode.Language + "\n" + part.ExecutableCode.Code + "\n```\n"
+				content = append(content, "```"+part.ExecutableCode.Language+"\n"+part.ExecutableCode.Code+"\n```")
 			} else if part.CodeExecutionResult != nil {
-				content += "```output\n" + part.CodeExecutionResult.Output + "\n```\n"
+				content = append(content, "```output\n"+part.CodeExecutionResult.Output+"\n```")
 			} else {
-				content += part.Text
+				content = append(content, part.Text)
 			}
 		}
 	}
 
-	choice.Delta.Content = content
+	choice.Delta.Content = strings.Join(content, "\n")
 
 	if isTools {
 		choice.FinishReason = types.FinishReasonToolCalls
@@ -124,7 +125,7 @@ func (candidate *GeminiChatCandidate) ToOpenAIChoice(request *types.ChatCompleti
 		return choice
 	}
 
-	content := ""
+	var content []string
 	useTools := false
 
 	for _, part := range candidate.Content.Parts {
@@ -136,16 +137,16 @@ func (candidate *GeminiChatCandidate) ToOpenAIChoice(request *types.ChatCompleti
 			choice.Message.ToolCalls = append(choice.Message.ToolCalls, part.FunctionCall.ToOpenAITool())
 		} else {
 			if part.ExecutableCode != nil {
-				content += "```" + part.ExecutableCode.Language + "\n" + part.ExecutableCode.Code + "\n```\n"
+				content = append(content, "```"+part.ExecutableCode.Language+"\n"+part.ExecutableCode.Code+"\n```")
 			} else if part.CodeExecutionResult != nil {
-				content += "```output\n" + part.CodeExecutionResult.Output + "\n```\n"
+				content = append(content, "```output\n"+part.CodeExecutionResult.Output+"\n```")
 			} else {
-				content += part.Text
+				content = append(content, part.Text)
 			}
 		}
 	}
 
-	choice.Message.Content = content
+	choice.Message.Content = strings.Join(content, "\n")
 
 	if useTools {
 		choice.FinishReason = types.FinishReasonToolCalls
@@ -274,28 +275,48 @@ func (g *GeminiChatResponse) GetResponseText() string {
 	return ""
 }
 
-func OpenAIToGeminiChatContent(openaiContents []types.ChatCompletionMessage) ([]GeminiChatContent, *types.OpenAIErrorWithStatusCode) {
+func OpenAIToGeminiChatContent(openaiContents []types.ChatCompletionMessage) ([]GeminiChatContent, string, *types.OpenAIErrorWithStatusCode) {
 	contents := make([]GeminiChatContent, 0)
 	useToolName := ""
+	var systemContent []string
+
 	for _, openaiContent := range openaiContents {
+		if openaiContent.IsSystemRole() {
+			systemContent = append(systemContent, openaiContent.StringContent())
+			continue
+		}
+
 		content := GeminiChatContent{
 			Role:  ConvertRole(openaiContent.Role),
 			Parts: make([]GeminiPart, 0),
 		}
 		content.Role = ConvertRole(openaiContent.Role)
-		if openaiContent.ToolCalls != nil || openaiContent.FunctionCall != nil {
-			if openaiContent.ToolCalls != nil {
-				useToolName = openaiContent.ToolCalls[0].Function.Name
-			} else {
-				useToolName = openaiContent.FunctionCall.Name
+		openaiContent.FuncToToolCalls()
+
+		if openaiContent.ToolCalls != nil {
+			argeStr := ""
+			useToolName = openaiContent.ToolCalls[0].Function.Name
+			if openaiContent.ToolCalls[0].Function.Arguments != "" {
+				argeStr = openaiContent.ToolCalls[0].Function.Arguments
 			}
+
+			arge := map[string]interface{}{}
+			if argeStr != "" {
+				json.Unmarshal([]byte(argeStr), &arge)
+			}
+
+			text := openaiContent.StringContent()
+			if text != "" {
+				contents = append(contents, createSystemResponse(text))
+			}
+
 			content = GeminiChatContent{
 				Role: "model",
 				Parts: []GeminiPart{
 					{
 						FunctionCall: &GeminiFunctionCall{
 							Name: useToolName,
-							Args: map[string]interface{}{},
+							Args: arge,
 						},
 					},
 				},
@@ -333,7 +354,7 @@ func OpenAIToGeminiChatContent(openaiContents []types.ChatCompletionMessage) ([]
 					}
 					mimeType, data, err := image.GetImageFromUrl(openaiPart.ImageURL.URL)
 					if err != nil {
-						return nil, common.ErrorWrapper(err, "image_url_invalid", http.StatusBadRequest)
+						return nil, "", common.ErrorWrapper(err, "image_url_invalid", http.StatusBadRequest)
 					}
 					content.Parts = append(content.Parts, GeminiPart{
 						InlineData: &GeminiInlineData{
@@ -345,20 +366,21 @@ func OpenAIToGeminiChatContent(openaiContents []types.ChatCompletionMessage) ([]
 			}
 		}
 		contents = append(contents, content)
-		if openaiContent.Role == types.ChatMessageRoleSystem {
-			contents = append(contents, GeminiChatContent{
-				Role: "model",
-				Parts: []GeminiPart{
-					{
-						Text: "Okay",
-					},
-				},
-			})
-		}
 
 	}
 
-	return contents, nil
+	return contents, strings.Join(systemContent, "\n"), nil
+}
+
+func createSystemResponse(text string) GeminiChatContent {
+	return GeminiChatContent{
+		Role: "model",
+		Parts: []GeminiPart{
+			{
+				Text: text,
+			},
+		},
+	}
 }
 
 type ModelListResponse struct {
@@ -386,4 +408,26 @@ func (e *GeminiErrorWithStatusCode) ToOpenAiError() *types.OpenAIErrorWithStatus
 		},
 		LocalError: e.LocalError,
 	}
+}
+
+type GeminiOpenaiUsage struct {
+	PromptTokens     int `json:"promptTokens"`
+	CompletionTokens int `json:"completionTokens"`
+	TotalTokens      int `json:"totalTokens"`
+}
+
+type GeminiOpenaiChatResponse struct {
+	types.ChatCompletionResponse
+	Usage *GeminiOpenaiUsage `json:"usage,omitempty"`
+}
+
+type GeminiOpenaiChatStreamResponse struct {
+	types.ChatCompletionStreamResponse
+	Usage *GeminiOpenaiUsage `json:"usage,omitempty"`
+}
+
+type GeminiErrors []*GeminiErrorResponse
+
+func (e *GeminiErrors) Error() *GeminiErrorResponse {
+	return (*e)[0]
 }
