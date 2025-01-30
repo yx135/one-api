@@ -14,11 +14,11 @@ type GeminiChatRequest struct {
 	Model             string                     `json:"-"`
 	Stream            bool                       `json:"-"`
 	Contents          []GeminiChatContent        `json:"contents"`
-	SafetySettings    []GeminiChatSafetySettings `json:"safety_settings,omitempty"`
-	GenerationConfig  GeminiChatGenerationConfig `json:"generation_config,omitempty"`
+	SafetySettings    []GeminiChatSafetySettings `json:"safetySettings,omitempty"`
+	GenerationConfig  GeminiChatGenerationConfig `json:"generationConfig,omitempty"`
 	Tools             []GeminiChatTools          `json:"tools,omitempty"`
 	ToolConfig        *GeminiToolConfig          `json:"toolConfig,omitempty"`
-	SystemInstruction *GeminiChatContent         `json:"systemInstruction,omitempty"`
+	SystemInstruction any                        `json:"systemInstruction,omitempty"`
 }
 
 type GeminiToolConfig struct {
@@ -26,8 +26,8 @@ type GeminiToolConfig struct {
 }
 
 type GeminiFunctionCallingConfig struct {
-	Model                string   `json:"model,omitempty"`
-	AllowedFunctionNames []string `json:"allowedFunctionNames,omitempty"`
+	Model                string `json:"model,omitempty"`
+	AllowedFunctionNames any    `json:"allowedFunctionNames,omitempty"`
 }
 type GeminiInlineData struct {
 	MimeType string `json:"mimeType"`
@@ -192,8 +192,10 @@ type GeminiChatSafetySettings struct {
 }
 
 type GeminiChatTools struct {
-	FunctionDeclarations []types.ChatCompletionFunction `json:"functionDeclarations,omitempty"`
-	CodeExecution        *GeminiCodeExecution           `json:"codeExecution,omitempty"`
+	FunctionDeclarations  []types.ChatCompletionFunction `json:"functionDeclarations,omitempty"`
+	CodeExecution         *GeminiCodeExecution           `json:"codeExecution,omitempty"`
+	GoogleSearch          any                            `json:"googleSearch,omitempty"`
+	GoogleSearchRetrieval any                            `json:"googleSearchRetrieval,omitempty"`
 }
 
 type GeminiCodeExecution struct {
@@ -277,8 +279,9 @@ func (g *GeminiChatResponse) GetResponseText() string {
 
 func OpenAIToGeminiChatContent(openaiContents []types.ChatCompletionMessage) ([]GeminiChatContent, string, *types.OpenAIErrorWithStatusCode) {
 	contents := make([]GeminiChatContent, 0)
-	useToolName := ""
+	// useToolName := ""
 	var systemContent []string
+	toolCallId := make(map[string]string)
 
 	for _, openaiContent := range openaiContents {
 		if openaiContent.IsSystemRole() {
@@ -290,55 +293,56 @@ func OpenAIToGeminiChatContent(openaiContents []types.ChatCompletionMessage) ([]
 			Role:  ConvertRole(openaiContent.Role),
 			Parts: make([]GeminiPart, 0),
 		}
-		content.Role = ConvertRole(openaiContent.Role)
 		openaiContent.FuncToToolCalls()
 
 		if openaiContent.ToolCalls != nil {
-			argeStr := ""
-			useToolName = openaiContent.ToolCalls[0].Function.Name
-			if openaiContent.ToolCalls[0].Function.Arguments != "" {
-				argeStr = openaiContent.ToolCalls[0].Function.Arguments
-			}
+			for _, toolCall := range openaiContent.ToolCalls {
+				toolCallId[toolCall.Id] = toolCall.Function.Name
 
-			arge := map[string]interface{}{}
-			if argeStr != "" {
-				json.Unmarshal([]byte(argeStr), &arge)
-			}
+				args := map[string]interface{}{}
+				if toolCall.Function.Arguments != "" {
+					json.Unmarshal([]byte(toolCall.Function.Arguments), &args)
+				}
 
+				content.Parts = append(content.Parts, GeminiPart{
+					FunctionCall: &GeminiFunctionCall{
+						Name: toolCall.Function.Name,
+						Args: args,
+					},
+				})
+
+			}
 			text := openaiContent.StringContent()
 			if text != "" {
 				contents = append(contents, createSystemResponse(text))
 			}
-
-			content = GeminiChatContent{
-				Role: "model",
-				Parts: []GeminiPart{
-					{
-						FunctionCall: &GeminiFunctionCall{
-							Name: useToolName,
-							Args: arge,
-						},
-					},
-				},
-			}
 		} else if openaiContent.Role == types.ChatMessageRoleFunction || openaiContent.Role == types.ChatMessageRoleTool {
 			if openaiContent.Name == nil {
-				openaiContent.Name = &useToolName
+				if toolName, exists := toolCallId[openaiContent.ToolCallID]; exists {
+					openaiContent.Name = &toolName
+				}
 			}
-			content = GeminiChatContent{
-				Role: "function",
-				Parts: []GeminiPart{
-					{
-						FunctionResponse: &GeminiFunctionResponse{
-							Name: *openaiContent.Name,
-							Response: GeminiFunctionResponseContent{
-								Name:    *openaiContent.Name,
-								Content: openaiContent.StringContent(),
-							},
-						},
+
+			functionPart := GeminiPart{
+				FunctionResponse: &GeminiFunctionResponse{
+					Name: *openaiContent.Name,
+					Response: GeminiFunctionResponseContent{
+						Name:    *openaiContent.Name,
+						Content: openaiContent.StringContent(),
 					},
 				},
 			}
+
+			if len(contents) > 0 && contents[len(contents)-1].Role == "function" {
+				contents[len(contents)-1].Parts = append(contents[len(contents)-1].Parts, functionPart)
+			} else {
+				contents = append(contents, GeminiChatContent{
+					Role:  "function",
+					Parts: []GeminiPart{functionPart},
+				})
+			}
+
+			continue
 		} else {
 			openaiMessagePart := openaiContent.ParseContent()
 			imageNum := 0
@@ -408,22 +412,6 @@ func (e *GeminiErrorWithStatusCode) ToOpenAiError() *types.OpenAIErrorWithStatus
 		},
 		LocalError: e.LocalError,
 	}
-}
-
-type GeminiOpenaiUsage struct {
-	PromptTokens     int `json:"promptTokens"`
-	CompletionTokens int `json:"completionTokens"`
-	TotalTokens      int `json:"totalTokens"`
-}
-
-type GeminiOpenaiChatResponse struct {
-	types.ChatCompletionResponse
-	Usage *GeminiOpenaiUsage `json:"usage,omitempty"`
-}
-
-type GeminiOpenaiChatStreamResponse struct {
-	types.ChatCompletionStreamResponse
-	Usage *GeminiOpenaiUsage `json:"usage,omitempty"`
 }
 
 type GeminiErrors []*GeminiErrorResponse

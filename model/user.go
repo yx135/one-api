@@ -65,7 +65,11 @@ func GetUsersList(params *GenericParams) (*DataResult[User], error) {
 	var users []*User
 	db := DB.Omit("password")
 	if params.Keyword != "" {
-		db = db.Where("id = ? or username LIKE ? or email LIKE ? or display_name LIKE ? or `group` LIKE ?", utils.String2Int(params.Keyword), params.Keyword+"%", params.Keyword+"%", params.Keyword+"%", params.Keyword+"%")
+		groupCol := "`group`"
+		if common.UsingPostgreSQL {
+			groupCol = `"group"`
+		}
+		db = db.Where("id = ? or username LIKE ? or email LIKE ? or display_name LIKE ? or " + groupCol + " LIKE ?", utils.String2Int(params.Keyword), params.Keyword+"%", params.Keyword+"%", params.Keyword+"%", params.Keyword+"%")
 	}
 
 	return PaginateAndOrder[User](db, &params.PaginationParams, &users, allowedUserOrderFields)
@@ -526,4 +530,26 @@ func GetUserStatisticsByPeriod(startTimestamp, endTimestamp int64) (statistics [
 	`, startTimestamp, endTimestamp).Scan(&statistics).Error
 
 	return statistics, err
+}
+
+func ChangeUserQuota(id int, quota int, isRecharge bool) (err error) {
+	updateMap := map[string]interface{}{
+		"quota": gorm.Expr("quota + ?", quota),
+	}
+
+	if isRecharge {
+		updateMap["recharge_count"] = gorm.Expr("recharge_count + 1")
+	}
+
+	err = DB.Model(&User{}).Where("id = ?", id).Updates(updateMap).Error
+
+	if err != nil {
+		return err
+	}
+
+	if config.RedisEnabled {
+		redis.RedisDel(fmt.Sprintf(UserQuotaCacheKey, id))
+	}
+
+	return nil
 }
